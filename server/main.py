@@ -433,299 +433,237 @@ async def widget_endpoint():
 # ============================================================================
 
 def generate_widget_html(data: Dict[str, Any]) -> str:
-    """Generate interactive HTML widget for ChatGPT"""
+    """Generate interactive HTML widget for ChatGPT using user-provided template"""
     
+    # Generate pairs HTML
     pairs_html = ""
     for pair in data["color_pairs"]:
-        # Status badges
-        aa_badge = "✓ AA" if pair["passes_aa_normal"] else "✗ AA"
-        aaa_badge = "✓ AAA" if pair["passes_aaa_normal"] else "✗ AAA"
-        aa_class = "pass" if pair["passes_aa_normal"] else "fail"
-        aaa_class = "pass" if pair["passes_aaa_normal"] else "fail"
+        # Status classes and icons
+        status_class = "pass" if pair["passes_aa_normal"] else "fail"
+        ratio_class = "pass" if pair["passes_aa_normal"] else "fail"
+        status_icon = "✅" if pair["passes_aa_normal"] else "❌"
         
-        # Suggestions section
+        # AA/AAA badges
+        aa_normal_class = "pass" if pair["passes_aa_normal"] else "fail"
+        aa_normal_icon = "✓" if pair["passes_aa_normal"] else "✗"
+        
+        aa_large_class = "pass" if pair["passes_aa_large"] else "fail"
+        aa_large_icon = "✓" if pair["passes_aa_large"] else "✗"
+        
+        aaa_normal_class = "pass" if pair["passes_aaa_normal"] else "fail"
+        aaa_normal_icon = "✓" if pair["passes_aaa_normal"] else "✗"
+        
+        aaa_large_class = "pass" if pair["passes_aaa_large"] else "fail"
+        aaa_large_icon = "✓" if pair["passes_aaa_large"] else "✗"
+        
+        # Suggestions
         suggestions_html = ""
-        if pair["suggestions"]:
-            suggestions_html = "<div class='suggestions'><strong>💡 Sugerencias:</strong><ul>"
+        has_suggestions = bool(pair["suggestions"])
+        
+        if has_suggestions:
+            sug_items = ""
             for sug in pair["suggestions"]:
-                suggestions_html += f"""
-                <li>
-                    <span>{sug['description']}</span>
-                    <span class='suggestion-ratio'>Nuevo ratio: {sug['new_contrast_ratio']}:1</span>
-                    <div class='suggestion-preview' style='background: {sug["preview_hex_bg"]}; color: {sug["preview_hex_fg"]}'>
-                        Aa
-                    </div>
-                </li>
-                """
-            suggestions_html += "</ul></div>"
+                sug_items += f'<div class="suggestion-item">→ {sug["description"]} (Nuevo ratio: {sug["new_contrast_ratio"]}:1)</div>'
+            
+            suggestions_html = f"""
+            <div class="suggestions">
+                <div class="suggestions-title">💡 OKLCH Suggestions:</div>
+                {sug_items}
+            </div>
+            """
         
         pairs_html += f"""
-        <div class='color-pair'>
-            <div class='pair-header'>
-                <h3>{pair['text_sample']}</h3>
-                <div class='badges'>
-                    <span class='badge {aa_class}'>{aa_badge}</span>
-                    <span class='badge {aaa_class}'>{aaa_badge}</span>
+        <div class="pair-card {status_class}">
+            <div class="pair-header">
+                <span class="element-name">{pair['text_sample']}</span>
+                <span class="ratio {ratio_class}">{pair['ratio']}:1 {status_icon}</span>
+            </div>
+            
+            <div class="color-preview">
+                <div class="color-box" style="background: {pair['background']}; color: {pair['foreground']};">Aa</div>
+                <div class="color-info">
+                    <div class="color-label">Text:</div>
+                    <div class="color-hex">{pair['foreground']}</div>
+                    <div class="color-label" style="margin-top: 8px;">Background:</div>
+                    <div class="color-hex">{pair['background']}</div>
                 </div>
             </div>
-            <div class='color-preview' style='background: {pair["background"]}; color: {pair["foreground"]}'>
-                <span class='preview-text'>Aa</span>
+
+            <div class="badges">
+                <span class="badge {aa_normal_class}">AA Normal {aa_normal_icon}</span>
+                <span class="badge {aa_large_class}">AA Large {aa_large_icon}</span>
+                <span class="badge {aaa_normal_class}">AAA Normal {aaa_normal_icon}</span>
+                <span class="badge {aaa_large_class}">AAA Large {aaa_large_icon}</span>
             </div>
-            <div class='pair-details'>
-                <div class='detail-row'>
-                    <span class='label'>Contraste:</span>
-                    <span class='value'>{pair['ratio']}:1</span>
-                </div>
-                <div class='detail-row'>
-                    <span class='label'>Texto:</span>
-                    <span class='value'>{pair['foreground']}</span>
-                </div>
-                <div class='detail-row'>
-                    <span class='label'>Fondo:</span>
-                    <span class='value'>{pair['background']}</span>
-                </div>
-            </div>
+
             {suggestions_html}
         </div>
         """
-    
+        
     return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-            
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding: 24px;
-                color: #1a202c;
-            }}
-            
-            .container {{
-                max-width: 800px;
-                margin: 0 auto;
-            }}
-            
-            .header {{
-                background: white;
-                border-radius: 16px;
-                padding: 24px;
-                margin-bottom: 20px;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            }}
-            
-            .header h1 {{
-                font-size: 28px;
-                margin-bottom: 16px;
-                color: #2d3748;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }}
-            
-            .summary {{
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 16px;
-                margin-top: 16px;
-            }}
-            
-            .summary-item {{
-                text-align: center;
-                padding: 16px;
-                background: #f7fafc;
-                border-radius: 12px;
-                border: 2px solid #e2e8f0;
-            }}
-            
-            .summary-item .number {{
-                font-size: 32px;
-                font-weight: bold;
-                display: block;
-                margin-bottom: 4px;
-            }}
-            
-            .summary-item.total .number {{ color: #667eea; }}
-            .summary-item.passed .number {{ color: #48bb78; }}
-            .summary-item.failed .number {{ color: #f56565; }}
-            
-            .summary-item .label {{
-                font-size: 14px;
-                color: #718096;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-            
-            .color-pair {{
-                background: white;
-                border-radius: 16px;
-                padding: 24px;
-                margin-bottom: 16px;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-                transition: transform 0.2s, box-shadow 0.2s;
-            }}
-            
-            .color-pair:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-            }}
-            
-            .pair-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 16px;
-            }}
-            
-            .pair-header h3 {{
-                font-size: 20px;
-                color: #2d3748;
-            }}
-            
-            .badges {{
-                display: flex;
-                gap: 8px;
-            }}
-            
-            .badge {{
-                padding: 6px 12px;
-                border-radius: 20px;
-                font-size: 12px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-            
-            .badge.pass {{
-                background: #c6f6d5;
-                color: #22543d;
-            }}
-            
-            .badge.fail {{
-                background: #fed7d7;
-                color: #742a2a;
-            }}
-            
-            .color-preview {{
-                height: 100px;
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin-bottom: 16px;
-                border: 2px solid #e2e8f0;
-            }}
-            
-            .preview-text {{
-                font-size: 48px;
-                font-weight: bold;
-            }}
-            
-            .pair-details {{
-                background: #f7fafc;
-                border-radius: 8px;
-                padding: 16px;
-            }}
-            
-            .detail-row {{
-                display: flex;
-                justify-content: space-between;
-                padding: 8px 0;
-                border-bottom: 1px solid #e2e8f0;
-            }}
-            
-            .detail-row:last-child {{
-                border-bottom: none;
-            }}
-            
-            .detail-row .label {{
-                font-weight: 600;
-                color: #4a5568;
-            }}
-            
-            .detail-row .value {{
-                font-family: 'Courier New', monospace;
-                color: #2d3748;
-            }}
-            
-            .suggestions {{
-                margin-top: 16px;
-                padding: 16px;
-                background: #fffaf0;
-                border-radius: 8px;
-                border-left: 4px solid #ed8936;
-            }}
-            
-            .suggestions strong {{
-                display: block;
-                margin-bottom: 12px;
-                color: #744210;
-            }}
-            
-            .suggestions ul {{
-                list-style: none;
-            }}
-            
-            .suggestions li {{
-                padding: 12px;
-                background: white;
-                border-radius: 6px;
-                margin-bottom: 8px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 12px;
-            }}
-            
-            .suggestion-ratio {{
-                font-size: 12px;
-                color: #718096;
-                font-weight: 600;
-            }}
-            
-            .suggestion-preview {{
-                width: 40px;
-                height: 40px;
-                border-radius: 6px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-weight: bold;
-                border: 2px solid #e2e8f0;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class='container'>
-            <div class='header'>
-                <h1>🎨 Análisis de Accesibilidad de Colores</h1>
-                <div class='summary'>
-                    <div class='summary-item total'>
-                        <span class='number'>{data['total_pairs']}</span>
-                        <span class='label'>Total</span>
-                    </div>
-                    <div class='summary-item passed'>
-                        <span class='number'>{data['passed_pairs']}</span>
-                        <span class='label'>Aprobados</span>
-                    </div>
-                    <div class='summary-item failed'>
-                        <span class='number'>{data['failed_pairs']}</span>
-                        <span class='label'>Fallidos</span>
-                    </div>
-                </div>
-            </div>
-            {pairs_html}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            padding: 20px;
+            background: white;
+        }}
+        .header {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+        }}
+        .header h1 {{
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1a1a;
+        }}
+        .summary {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }}
+        .summary-card {{
+            padding: 16px;
+            border-radius: 12px;
+            text-align: center;
+        }}
+        .summary-card.total {{ background: #f5f5f5; }}
+        .summary-card.passed {{ background: #d4f4dd; }}
+        .summary-card.failed {{ background: #ffd4d4; }}
+        .summary-card .number {{
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }}
+        .summary-card .label {{
+            font-size: 14px;
+            color: #666;
+        }}
+        .pair-card {{
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }}
+        .pair-card.fail {{
+            border-color: #ff6b6b;
+            background: #fff5f5;
+        }}
+        .pair-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }}
+        .element-name {{
+            font-weight: 600;
+            font-size: 16px;
+            color: #1a1a1a;
+        }}
+        .ratio {{
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .ratio.pass {{ color: #2ea44f; }}
+        .ratio.fail {{ color: #ff6b6b; }}
+        .color-preview {{
+            display: flex;
+            gap: 16px;
+            margin-bottom: 12px;
+        }}
+        .color-box {{
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 700;
+            border: 2px solid #e0e0e0;
+        }}
+        .color-info {{
+            flex: 1;
+        }}
+        .color-label {{
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }}
+        .color-hex {{
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #1a1a1a;
+        }}
+        .badges {{
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+        .badge {{
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .badge.pass {{
+            background: #d4f4dd;
+            color: #1a7f37;
+        }}
+        .badge.fail {{
+            background: #ffd4d4;
+            color: #cf222e;
+        }}
+        .suggestions {{
+            margin-top: 12px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }}
+        .suggestions-title {{
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+        }}
+        .suggestion-item {{
+            font-size: 14px;
+            color: #1a1a1a;
+            padding: 4px 0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <span style="font-size: 28px;">🎨</span>
+        <h1>Color Accessibility Check</h1>
+    </div>
+
+    <div class="summary">
+        <div class="summary-card total">
+            <div class="number">{data['total_pairs']}</div>
+            <div class="label">Total Pairs</div>
         </div>
-    </body>
-    </html>
-    """
+        <div class="summary-card passed">
+            <div class="number">✅ {data['passed_pairs']}</div>
+            <div class="label">Passed</div>
+        </div>
+        <div class="summary-card failed">
+            <div class="number">❌ {data['failed_pairs']}</div>
+            <div class="label">Failed</div>
+        </div>
+    </div>
+
+    {pairs_html}
+</body>
+</html>
+"""
 
 
 if __name__ == "__main__":
