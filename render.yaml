@@ -2,13 +2,13 @@ services:
   - type: web
     name: color-accessibility-checker
     runtime: node
-    plan: free
     region: oregon
-    rootDir: .
-    buildCommand: cd server && npm install
-    startCommand: cd server && npm start
+    plan: free
+    branch: main
+    buildCommand: cd mcp-server && npm install
+    startCommand: cd mcp-server && node index.js
     envVars:
+      - key: NODE_VERSION
+        value: "18"
       - key: PORT
-        value: 10000
-    healthCheckPath: /
-    autoDeploy: true
+        value: "10000"
