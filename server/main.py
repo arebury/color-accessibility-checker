@@ -367,10 +367,6 @@ async def mcp_endpoint(request: JSONRPCRequest):
                     "result": {
                         "content": [
                             {
-                                "type": "text",
-                                "text": f"Analysis complete: {passed_count} passed, {failed_count} failed."
-                            },
-                            {
                                 "type": "resource",
                                 "resource": {
                                     "uri": "ui://widget/color-accessibility.html",
