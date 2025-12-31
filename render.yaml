@@ -1,16 +1,14 @@
 services:
   - type: web
     name: color-accessibility-checker
-    runtime: python
+    runtime: node
     plan: free
     region: oregon
     rootDir: .
-    buildCommand: pip install -r server/requirements.txt
-    startCommand: cd server && uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
     envVars:
       - key: PORT
         value: 10000
-      - key: PYTHON_VERSION
-        value: 3.11.0
     healthCheckPath: /
     autoDeploy: true
