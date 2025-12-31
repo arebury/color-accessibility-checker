@@ -5,7 +5,7 @@ Description: WCAG color contrast analyzer with ChatGPT visual widget
 """
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import re
 from pathlib import Path
@@ -158,6 +158,13 @@ async def root():
         "author": "Rafael Areses Delgado-Brackenbury",
         "version": "1.0.0"
     }
+
+@app.get("/widget")
+async def widget_endpoint():
+    """Sirve el widget HTML para desarrollo/testing"""
+    template_path = Path(__file__).parent.parent / "web" / "ui-template.html"
+    html_content = template_path.read_text(encoding='utf-8')
+    return HTMLResponse(content=html_content)
 
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
