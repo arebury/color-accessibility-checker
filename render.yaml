@@ -1,13 +1,12 @@
 services:
   - type: web
     name: color-accessibility-checker
-    runtime: node
+    runtime: python
     region: oregon
     plan: free
     branch: main
-    rootDir: mcp-server
-    buildCommand: npm install
-    startCommand: node index.js
+    buildCommand: pip install -r server/requirements.txt
+    startCommand: cd server && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: NODE_VERSION
-        value: "18"
+      - key: PYTHON_VERSION
+        value: "3.10.0"
