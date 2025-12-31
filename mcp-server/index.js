@@ -1,299 +1,223 @@
+/**
+ * Color Accessibility Checker - MCP Server
+ * Author: Rafael Areses Delgado-Brackenbury
+ */
 
 import express from 'express';
 import cors from 'cors';
-import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import Color from 'colorjs.io';
-import { z } from 'zod';
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { converter, formatHex, formatCss } from 'culori';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// Setup dirname equivalent for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const oklch = converter('oklch');
 
-const app = express();
-const PORT = process.env.PORT || 8000;
+const server = new Server(
+  { name: "color-accessibility-checker", version: "1.0.0" },
+  { capabilities: { tools: {} } }
+);
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+function getRelativeLuminance(r, g, b) {
+  const [rs, gs, bs] = [r, g, b].map(val => {
+    const v = val / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+}
 
-// Health check
-app.get('/', (req, res) => {
-    res.json({ status: "healthy", service: "Color Accessibility Checker MCP (Node)" });
-});
-
-// Initialize MCP Server
-const server = new McpServer({
-    name: "color-accessibility-mcp",
-    version: "1.0.0"
-});
-
-// Helper Functions
-function calculateContrast(fg, bg) {
-    try {
-        const c1 = new Color(fg);
-        const c2 = new Color(bg);
-        return c1.contrast(c2, "WCAG21");
-    } catch (e) {
-        console.error("Error calculating contrast:", e);
-        return 1;
-    }
+function calculateContrastRatio(color1, color2) {
+  const lum1 = getRelativeLuminance(color1.r, color1.g, color1.b);
+  const lum2 = getRelativeLuminance(color2.r, color2.g, color2.b);
+  const lighter = Math.max(lum1, lum2);
+  const darker = Math.min(lum1, lum2);
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
 function evaluateWCAG(ratio) {
-    return {
-        passes_aa_normal: ratio >= 4.5,
-        passes_aa_large: ratio >= 3.0,
-        passes_aaa_normal: ratio >= 7.0,
-        passes_aaa_large: ratio >= 4.5
-    };
+  return {
+    aa: { normal_text: ratio >= 4.5, large_text: ratio >= 3.0 },
+    aaa: { normal_text: ratio >= 7.0, large_text: ratio >= 4.5 }
+  };
 }
 
-function generateSuggestions(fgHex, bgHex, currentRatio) {
-    const suggestions = [];
-    if (currentRatio >= 4.5) return suggestions;
-
-    try {
-        const fg = new Color(fgHex);
-        const bg = new Color(bgHex);
-
-        // Convert to OKLCH for uniform adjustments
-        // We'll increment lightness in steps of 0.05
-
-        // 1. Darken Background
-        let bgDark = bg.to("oklch");
-        bgDark.l = Math.max(0, bgDark.l - 0.15);
-        let newBgHex = bgDark.to("srgb").toString({ format: "hex" });
-        let newRatio = calculateContrast(fgHex, newBgHex);
-
-        if (newRatio > currentRatio) {
-            suggestions.push({
-                type: "darken_bg",
-                description: "Oscurecer el fondo",
-                new_contrast_ratio: Number(newRatio.toFixed(2)),
-                preview_hex_fg: fgHex,
-                preview_hex_bg: newBgHex
-            });
-        }
-
-        // 2. Lighten Background
-        let bgLight = bg.to("oklch");
-        bgLight.l = Math.min(1, bgLight.l + 0.15);
-        newBgHex = bgLight.to("srgb").toString({ format: "hex" });
-        newRatio = calculateContrast(fgHex, newBgHex);
-
-        if (newRatio > currentRatio) {
-            suggestions.push({
-                type: "lighten_bg",
-                description: "Aclarar el fondo",
-                new_contrast_ratio: Number(newRatio.toFixed(2)),
-                preview_hex_fg: fgHex,
-                preview_hex_bg: newBgHex
-            });
-        }
-
-        // 3. Adjust Foreground (Darken)
-        let fgDark = fg.to("oklch");
-        fgDark.l = Math.max(0, fgDark.l - 0.15);
-        let newFgHex = fgDark.to("srgb").toString({ format: "hex" });
-        newRatio = calculateContrast(newFgHex, bgHex);
-
-        if (newRatio > currentRatio) {
-            suggestions.push({
-                type: "darken_fg",
-                description: "Oscurecer el texto",
-                new_contrast_ratio: Number(newRatio.toFixed(2)),
-                preview_hex_fg: newFgHex,
-                preview_hex_bg: bgHex
-            });
-        }
-
-        // 4. Adjust Foreground (Lighten)
-        let fgLight = fg.to("oklch");
-        fgLight.l = Math.min(1, fgLight.l + 0.15);
-        newFgHex = fgLight.to("srgb").toString({ format: "hex" });
-        newRatio = calculateContrast(newFgHex, bgHex);
-
-        if (newRatio > currentRatio) {
-            suggestions.push({
-                type: "lighten_fg",
-                description: "Aclarar el texto",
-                new_contrast_ratio: Number(newRatio.toFixed(2)),
-                preview_hex_fg: newFgHex,
-                preview_hex_bg: bgHex
-            });
-        }
-
-        return suggestions.sort((a, b) => b.new_contrast_ratio - a.new_contrast_ratio).slice(0, 2);
-
-    } catch (e) {
-        console.error("Suggestion error:", e);
-        return [];
-    }
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null;
 }
 
-// Define MCP Tool
-server.tool(
-    "check_color_accessibility",
-    {
-        color_pairs: z.array(z.object({
-            foreground: z.string(),
-            background: z.string(),
-            element: z.string()
-        }))
-    },
-    async ({ color_pairs }) => {
-        let passedCount = 0;
-        let failedCount = 0;
-        const processedPairs = [];
+function adjustLuminance(oklchColor, delta) {
+  return { ...oklchColor, l: Math.max(0, Math.min(1, oklchColor.l + delta)) };
+}
 
-        for (const [idx, pair] of color_pairs.entries()) {
-            const ratio = calculateContrast(pair.foreground, pair.background);
-            const wcag = evaluateWCAG(ratio);
-            const suggestions = generateSuggestions(pair.foreground, pair.background, ratio);
-
-            if (wcag.passes_aa_normal) passedCount++;
-            else failedCount++;
-
-            processedPairs.push({
-                id: `pair-${idx}`,
-                text: pair.element,
-                background: pair.background,
-                foreground: pair.foreground,
-                contrast_ratio: Number(ratio.toFixed(2)),
-                wcag_aa: {
-                    normal_text: wcag.passes_aa_normal,
-                    large_text: wcag.passes_aa_large
-                },
-                wcag_aaa: {
-                    normal_text: wcag.passes_aaa_normal,
-                    large_text: wcag.passes_aaa_large
-                },
-                status: wcag.passes_aa_normal ? "pass" : "fail",
-                suggestions: suggestions.map(s => ({
-                    type: s.type,
-                    background_oklch: "",
-                    foreground_oklch: "",
-                    new_contrast_ratio: s.new_contrast_ratio,
-                    preview_hex_bg: s.preview_hex_bg,
-                    preview_hex_fg: s.preview_hex_fg,
-                    description: s.description
-                }))
-            });
-        }
-
-        const results = {
-            summary: {
-                total_pairs: color_pairs.length,
-                passing_pairs: passedCount,
-                failing_pairs: failedCount,
-                detected_texts: color_pairs.length
-            },
-            color_pairs: processedPairs
-        };
-
-        // Inject Data into Template
-        try {
-            const templatePath = path.join(__dirname, 'widget-template.html');
-            let htmlContent = await fs.readFile(templatePath, 'utf-8');
-
-            const resultsJson = JSON.stringify(results);
-            htmlContent = htmlContent.replace(
-                'const sampleData = {',
-                `const sampleData = ${resultsJson}; \n const _ignored = {`
-            );
-
-            return {
-                content: [
-                    {
-                        type: "resource",
-                        resource: {
-                            uri: "ui://widget/color-accessibility.html",
-                            mimeType: "text/html",
-                            text: htmlContent
-                        }
-                    }
-                ]
-            };
-
-        } catch (e) {
-            console.error("Error generating widget:", e);
-            return {
-                content: [
-                    { type: "text", text: "Error executing tool: " + e.message }
-                ],
-                isError: true
-            };
-        }
-    }
-);
-
-// logic implementation detached if needed, but SDK handles tool calls mostly.
-
-// CRÍTICO: SSE Endpoint Implementation
-// Must handle proper headers via SSEServerTransport
-// CRÍTICO: SSE Endpoint Implementation
-// Must handle proper headers via SSEServerTransport
-
-// FIXED: Use a Map to store transports by session ID to support multiple concurrent connections
-// (prevents "Timeout" issues if global variable is overwritten)
-const transports = new Map();
-
-app.get('/mcp/sse', async (req, res) => {
-    console.log('=== SSE CONNECTION ATTEMPT ===');
-    console.log('Headers received:', req.headers);
-
-    try {
-        console.log('Creating SSEServerTransport...');
-        const baseUrl = `https://${req.get('host')}`;
-        const transport = new SSEServerTransport(`${baseUrl}/mcp/messages`, res);
-
-        console.log('Transport ID:', transport.sessionId);
-
-        if (transport.sessionId) {
-            transports.set(transport.sessionId, transport);
-        }
-
-        console.log('Connecting to MCP server...');
-        await server.connect(transport);
-
-        console.log('✅ SSE connected successfully');
-
-        // Clean up on close
-        req.on('close', () => {
-            console.log('SSE connection closed for session:', transport.sessionId);
-            if (transport.sessionId) {
-                transports.delete(transport.sessionId);
-            }
+function generateColorSuggestions(bgHex, fgHex, targetRatio = 4.5) {
+  const suggestions = [];
+  const bgOKLCH = oklch(bgHex);
+  const fgOKLCH = oklch(fgHex);
+  if (!bgOKLCH || !fgOKLCH) return suggestions;
+  
+  for (let i = 0.1; i <= 0.5; i += 0.1) {
+    const newBg = adjustLuminance(bgOKLCH, i);
+    const newBgHex = formatHex(newBg);
+    const bgRgb = hexToRgb(newBgHex);
+    const fgRgb = hexToRgb(fgHex);
+    if (bgRgb && fgRgb) {
+      const ratio = calculateContrastRatio(bgRgb, fgRgb);
+      if (ratio >= targetRatio) {
+        suggestions.push({
+          type: 'lighten_bg',
+          background_oklch: formatCss(newBg),
+          foreground_oklch: formatCss(fgOKLCH),
+          new_contrast_ratio: Math.round(ratio * 10) / 10,
+          preview_hex_bg: newBgHex,
+          preview_hex_fg: fgHex
         });
-
-    } catch (error) {
-        console.error('❌ SSE connection error:', error);
-        if (!res.headersSent) {
-            res.status(500).send('SSE setup failed');
-        }
+        break;
+      }
     }
+  }
+  
+  for (let i = -0.1; i >= -0.5; i -= 0.1) {
+    const newBg = adjustLuminance(bgOKLCH, i);
+    const newBgHex = formatHex(newBg);
+    const bgRgb = hexToRgb(newBgHex);
+    const fgRgb = hexToRgb(fgHex);
+    if (bgRgb && fgRgb) {
+      const ratio = calculateContrastRatio(bgRgb, fgRgb);
+      if (ratio >= targetRatio) {
+        suggestions.push({
+          type: 'darken_bg',
+          background_oklch: formatCss(newBg),
+          foreground_oklch: formatCss(fgOKLCH),
+          new_contrast_ratio: Math.round(ratio * 10) / 10,
+          preview_hex_bg: newBgHex,
+          preview_hex_fg: fgHex
+        });
+        break;
+      }
+    }
+  }
+  return suggestions;
+}
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [{
+    name: "check_color_accessibility",
+    description: "Analyzes color pairs for WCAG compliance",
+    inputSchema: {
+      type: "object",
+      properties: {
+        color_pairs: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              foreground: { type: "string" },
+              background: { type: "string" },
+              element: { type: "string" }
+            },
+            required: ["foreground", "background", "element"]
+          }
+        }
+      },
+      required: ["color_pairs"]
+    }
+  }]
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === "check_color_accessibility") {
+    const { color_pairs } = request.params.arguments;
+    try {
+      const colorPairs = [];
+      let passingPairs = 0, failingPairs = 0;
+      
+      for (let i = 0; i < color_pairs.length; i++) {
+        const pair = color_pairs[i];
+        const fgRgb = hexToRgb(pair.foreground);
+        const bgRgb = hexToRgb(pair.background);
+        if (!fgRgb || !bgRgb) continue;
+        
+        const ratio = calculateContrastRatio(fgRgb, bgRgb);
+        const wcagEval = evaluateWCAG(ratio);
+        const passes = wcagEval.aa.normal_text;
+        const suggestions = !passes ? generateColorSuggestions(pair.background, pair.foreground, 4.5) : [];
+        
+        colorPairs.push({
+          id: `pair-${i}`,
+          text: pair.element,
+          background: pair.background,
+          foreground: pair.foreground,
+          contrast_ratio: Math.round(ratio * 10) / 10,
+          wcag_aa: wcagEval.aa,
+          wcag_aaa: wcagEval.aaa,
+          status: passes ? 'pass' : 'fail',
+          suggestions
+        });
+        
+        if (passes) passingPairs++; else failingPairs++;
+      }
+      
+      const results = {
+        summary: {
+          total_pairs: colorPairs.length,
+          passing_pairs: passingPairs,
+          failing_pairs: failingPairs,
+          detected_texts: colorPairs.length
+        },
+        color_pairs: colorPairs
+      };
+      
+      const templatePath = path.join(__dirname, '../web/ui-template.html');
+      let htmlContent = await fs.readFile(templatePath, 'utf-8');
+      htmlContent = htmlContent.replace('const sampleData = {', `const sampleData = ${JSON.stringify(results)}; \n const _ignored = {`);
+      
+      return {
+        content: [{
+          type: "resource",
+          resource: {
+            uri: "ui://widget/color-accessibility.html",
+            mimeType: "text/html",
+            text: htmlContent
+          }
+        }]
+      };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+    }
+  }
+  throw new Error(`Unknown tool: ${request.params.name}`);
+});
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
+app.get('/', (req, res) => {
+  res.json({ status: 'active', service: 'Color Accessibility Checker', author: 'Rafael Areses' });
+});
+
+let transport;
+app.get('/mcp/sse', async (req, res) => {
+  console.log('SSE connection established');
+  transport = new SSEServerTransport('/mcp/messages', res);
+  await server.connect(transport);
 });
 
 app.post('/mcp/messages', async (req, res) => {
-    const sessionId = req.query.sessionId;
-    console.log('Received POST for session:', sessionId);
-
-    const transport = transports.get(sessionId);
-
-    if (transport) {
-        await transport.handlePostMessage(req, res);
-    } else {
-        console.warn('❌ Session not found:', sessionId);
-        res.status(404).send('Session not found');
-    }
+  if (transport) {
+    await transport.handlePostMessage(req, res);
+  } else {
+    res.status(400).send('No active connection');
+  }
 });
 
-// Manual router for POST /mcp is NOT NEEDED if using SSE.
-// But we leave it for compatibility with tools inspecting this endpoint.
-
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

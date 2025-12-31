@@ -5,10 +5,9 @@ services:
     region: oregon
     plan: free
     branch: main
-    buildCommand: cd mcp-server && npm install
-    startCommand: cd mcp-server && node index.js
+    rootDir: mcp-server
+    buildCommand: npm install
+    startCommand: node index.js
     envVars:
       - key: NODE_VERSION
         value: "18"
-      - key: PORT
-        value: "10000"
