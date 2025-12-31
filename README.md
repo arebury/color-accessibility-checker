@@ -26,7 +26,7 @@ A Model Context Protocol (MCP) server that provides WCAG color contrast analysis
    ```
 
 3. **Test Endpoint**:
-   The server exposes a single JSON-RPC 2.0 endpoint at `/mcp`.
+   The server exposes a single JSON-RPC 2.0 endpoint at `https://color-accessibility-checker-se8r.onrender.com/mcp`.
 
 ## Deployment
 Deployed automatically to Render.com via `render.yaml`.
