@@ -237,15 +237,23 @@ server.tool(
 let transport;
 
 app.get('/mcp/sse', async (req, res) => {
-    console.log('New SSE connection');
+    console.log('=== SSE CONNECTION ATTEMPT ===');
+    console.log('Headers received:', req.headers);
 
-    // NOTE: SSEServerTransport handles Content-Type: text/event-stream headers automatically.
-    // We pass the res object directly.
+    try {
+        console.log('Creating SSEServerTransport...');
+        transport = new SSEServerTransport('/mcp/messages', res);
 
-    transport = new SSEServerTransport('/mcp/messages', res);
-    await server.connect(transport);
+        console.log('Connecting to MCP server...');
+        await server.connect(transport);
 
-    // Do NOT send any extra response here to avoid overwriting headers or closing connection
+        console.log('✅ SSE connected successfully');
+    } catch (error) {
+        console.error('❌ SSE connection error:', error);
+        if (!res.headersSent) {
+            res.status(500).send('SSE setup failed');
+        }
+    }
 });
 
 app.post('/mcp/messages', async (req, res) => {
