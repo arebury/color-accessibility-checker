@@ -3,6 +3,8 @@
 FastAPI server that checks color accessibility according to WCAG standards
 """
 
+import os
+import json
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -194,47 +196,11 @@ def generate_oklch_suggestions(fg_hex: str, bg_hex: str, current_ratio: float) -
 
 def check_color_accessibility(color_pairs: List[Dict[str, str]]) -> Dict[str, Any]:
     """
-    Main MCP tool: Check color accessibility for multiple color pairs
+    Legacy function - mostly replaced by logic inside mcp_endpoint for new format,
+    but kept for reference if needed.
     """
-    results = []
-    passed_count = 0
-    failed_count = 0
-    
-    for pair in color_pairs:
-        fg = pair["foreground"]
-        bg = pair["background"]
-        element = pair["element"]
-        
-        # Calculate contrast ratio
-        ratio = calculate_contrast_ratio(fg, bg)
-        
-        # Evaluate WCAG compliance
-        wcag_results = evaluate_wcag(ratio)
-        
-        # Generate suggestions if needed
-        suggestions = generate_oklch_suggestions(fg, bg, ratio)
-        
-        # Determine if pair passes AA normal (most common requirement)
-        if wcag_results["passes_aa_normal"]:
-            passed_count += 1
-        else:
-            failed_count += 1
-        
-        results.append({
-            "text_sample": element,
-            "foreground": fg,
-            "background": bg,
-            "ratio": round(ratio, 2),
-            **wcag_results,
-            "suggestions": suggestions,
-        })
-    
-    return {
-        "total_pairs": len(color_pairs),
-        "passed_pairs": passed_count,
-        "failed_pairs": failed_count,
-        "color_pairs": results,
-    }
+    # This logic is now moved to mcp_endpoint to format specifically for the new widget structure
+    pass
 
 
 # ============================================================================
@@ -321,7 +287,80 @@ async def mcp_endpoint(request: JSONRPCRequest):
         
         if tool_name == "check_color_accessibility":
             try:
-                result = check_color_accessibility(arguments["color_pairs"])
+                # Process color pairs
+                color_pairs = arguments.get("color_pairs", [])
+                processed_pairs = []
+                passed_count = 0
+                failed_count = 0
+                
+                for idx, pair in enumerate(color_pairs):
+                    fg = pair["foreground"]
+                    bg = pair["background"]
+                    element = pair["element"]
+                    
+                    ratio = calculate_contrast_ratio(fg, bg)
+                    wcag = evaluate_wcag(ratio)
+                    suggestions = generate_oklch_suggestions(fg, bg, ratio)
+                    
+                    is_pass = wcag["passes_aa_normal"]
+                    if is_pass:
+                        passed_count += 1
+                    else:
+                        failed_count += 1
+                    
+                    # Map suggestions to new format
+                    formatted_suggestions = []
+                    for sug in suggestions:
+                        formatted_suggestions.append({
+                            "type": sug["type"],
+                            "background_oklch": "", # Advanced OKLCH string could be added here
+                            "foreground_oklch": "",
+                            "new_contrast_ratio": sug["new_contrast_ratio"],
+                            "preview_hex_bg": sug["preview_hex_bg"],
+                            "preview_hex_fg": sug["preview_hex_fg"]
+                        })
+
+                    processed_pairs.append({
+                        "id": f"pair-{idx}",
+                        "text": element,
+                        "background": bg,
+                        "foreground": fg,
+                        "contrast_ratio": round(ratio, 2),
+                        "wcag_aa": {
+                            "normal_text": wcag["passes_aa_normal"],
+                            "large_text": wcag["passes_aa_large"]
+                        },
+                        "wcag_aaa": {
+                            "normal_text": wcag["passes_aaa_normal"],
+                            "large_text": wcag["passes_aaa_large"]
+                        },
+                        "status": "pass" if is_pass else "fail",
+                        "suggestions": formatted_suggestions
+                    })
+                
+                # Construct final results object matching reference schema
+                results = {
+                    "summary": {
+                        "total_pairs": len(color_pairs),
+                        "passing_pairs": passed_count,
+                        "failing_pairs": failed_count,
+                        "detected_texts": len(color_pairs)
+                    },
+                    "color_pairs": processed_pairs
+                }
+                
+                # Read template and inject data
+                template_path = os.path.join(os.path.dirname(__file__), 'widget-template.html')
+                with open(template_path, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+                
+                # Inject data into template
+                results_json = json.dumps(results)
+                html_content = html_content.replace(
+                    'const sampleData = {',
+                    f'const sampleData = {results_json}; \n const _ignored = {{'
+                )
+                
                 return {
                     "jsonrpc": "2.0",
                     "id": request.id,
@@ -329,20 +368,22 @@ async def mcp_endpoint(request: JSONRPCRequest):
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"Análisis completado: {result['passed_pairs']} pares aprobados, {result['failed_pairs']} pares fallidos"
+                                "text": f"Analysis complete: {passed_count} passed, {failed_count} failed."
                             },
                             {
                                 "type": "resource",
                                 "resource": {
-                                    "uri": f"widget://color-accessibility-results",
-                                    "mimeType": "text/html+skybridge",
-                                    "text": generate_widget_html(result)
+                                    "uri": "ui://widget/color-accessibility.html",
+                                    "mimeType": "text/html",
+                                    "text": html_content
                                 }
                             }
                         ]
                     }
                 }
             except Exception as e:
+                import traceback
+                print(traceback.format_exc())
                 return {
                     "jsonrpc": "2.0",
                     "id": request.id,
@@ -361,7 +402,6 @@ async def mcp_endpoint(request: JSONRPCRequest):
                 }
             }
             
-    # Handle Ping (optional but good practice)
     elif request.method == "ping":
         return {
             "jsonrpc": "2.0",
@@ -369,7 +409,6 @@ async def mcp_endpoint(request: JSONRPCRequest):
             "result": {}
         }
     
-    # Unknown Method
     else:
         return {
             "jsonrpc": "2.0",
@@ -386,284 +425,40 @@ async def widget_endpoint():
     """
     Test widget endpoint - returns sample HTML widget
     """
-    sample_data = {
-        "total_pairs": 2,
-        "passed_pairs": 1,
-        "failed_pairs": 1,
+    # For quick testing, using dummy data with the new template mechanism
+    sample_results = {
+        "summary": {
+            "total_pairs": 1,
+            "passing_pairs": 0,
+            "failing_pairs": 1,
+            "detected_texts": 1
+        },
         "color_pairs": [
-            {
-                "text_sample": "Título principal",
-                "foreground": "#333333",
+             {
+                "id": "pair-0",
+                "text": "Example Text",
                 "background": "#FFFFFF",
-                "ratio": 12.63,
-                "passes_aa_normal": True,
-                "passes_aa_large": True,
-                "passes_aaa_normal": True,
-                "passes_aaa_large": True,
+                "foreground": "#EEEEEE",
+                "contrast_ratio": 1.08,
+                "wcag_aa": {"normal_text": False, "large_text": False},
+                "wcag_aaa": {"normal_text": False, "large_text": False},
+                "status": "fail",
                 "suggestions": []
-            },
-            {
-                "text_sample": "Enlace de navegación",
-                "foreground": "#0066CC",
-                "background": "#F5F5F5",
-                "ratio": 4.12,
-                "passes_aa_normal": False,
-                "passes_aa_large": True,
-                "passes_aaa_normal": False,
-                "passes_aaa_large": False,
-                "suggestions": [
-                    {
-                        "type": "darken_bg",
-                        "description": "Oscurecer el fondo",
-                        "new_contrast_ratio": 5.2,
-                        "preview_hex_fg": "#0066CC",
-                        "preview_hex_bg": "#E0E0E0"
-                    }
-                ]
             }
         ]
     }
     
-    html = generate_widget_html(sample_data)
-    return Response(content=html, media_type="text/html+skybridge")
+    template_path = os.path.join(os.path.dirname(__file__), 'widget-template.html')
+    with open(template_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
 
-
-# ============================================================================
-# Widget HTML Generator
-# ============================================================================
-
-def generate_widget_html(data: Dict[str, Any]) -> str:
-    """Generate interactive HTML widget for ChatGPT using user-provided template"""
+    results_json = json.dumps(sample_results)
+    html_content = html_content.replace(
+        'const sampleData = {',
+        f'const sampleData = {results_json}; \n const _ignored = {{'
+    )
     
-    # Generate pairs HTML
-    pairs_html = ""
-    for pair in data["color_pairs"]:
-        # Status classes and icons
-        status_class = "pass" if pair["passes_aa_normal"] else "fail"
-        ratio_class = "pass" if pair["passes_aa_normal"] else "fail"
-        status_icon = "✅" if pair["passes_aa_normal"] else "❌"
-        
-        # AA/AAA badges
-        aa_normal_class = "pass" if pair["passes_aa_normal"] else "fail"
-        aa_normal_icon = "✓" if pair["passes_aa_normal"] else "✗"
-        
-        aa_large_class = "pass" if pair["passes_aa_large"] else "fail"
-        aa_large_icon = "✓" if pair["passes_aa_large"] else "✗"
-        
-        aaa_normal_class = "pass" if pair["passes_aaa_normal"] else "fail"
-        aaa_normal_icon = "✓" if pair["passes_aaa_normal"] else "✗"
-        
-        aaa_large_class = "pass" if pair["passes_aaa_large"] else "fail"
-        aaa_large_icon = "✓" if pair["passes_aaa_large"] else "✗"
-        
-        # Suggestions
-        suggestions_html = ""
-        has_suggestions = bool(pair["suggestions"])
-        
-        if has_suggestions:
-            sug_items = ""
-            for sug in pair["suggestions"]:
-                sug_items += f'<div class="suggestion-item">→ {sug["description"]} (Nuevo ratio: {sug["new_contrast_ratio"]}:1)</div>'
-            
-            suggestions_html = f"""
-            <div class="suggestions">
-                <div class="suggestions-title">💡 OKLCH Suggestions:</div>
-                {sug_items}
-            </div>
-            """
-        
-        pairs_html += f"""
-        <div class="pair-card {status_class}">
-            <div class="pair-header">
-                <span class="element-name">{pair['text_sample']}</span>
-                <span class="ratio {ratio_class}">{pair['ratio']}:1 {status_icon}</span>
-            </div>
-            
-            <div class="color-preview">
-                <div class="color-box" style="background: {pair['background']}; color: {pair['foreground']};">Aa</div>
-                <div class="color-info">
-                    <div class="color-label">Text:</div>
-                    <div class="color-hex">{pair['foreground']}</div>
-                    <div class="color-label" style="margin-top: 8px;">Background:</div>
-                    <div class="color-hex">{pair['background']}</div>
-                </div>
-            </div>
-
-            <div class="badges">
-                <span class="badge {aa_normal_class}">AA Normal {aa_normal_icon}</span>
-                <span class="badge {aa_large_class}">AA Large {aa_large_icon}</span>
-                <span class="badge {aaa_normal_class}">AAA Normal {aaa_normal_icon}</span>
-                <span class="badge {aaa_large_class}">AAA Large {aaa_large_icon}</span>
-            </div>
-
-            {suggestions_html}
-        </div>
-        """
-        
-    return f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            padding: 20px;
-            background: white;
-        }}
-        .header {{
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 24px;
-        }}
-        .header h1 {{
-            font-size: 24px;
-            font-weight: 600;
-            color: #1a1a1a;
-        }}
-        .summary {{
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 24px;
-        }}
-        .summary-card {{
-            padding: 16px;
-            border-radius: 12px;
-            text-align: center;
-        }}
-        .summary-card.total {{ background: #f5f5f5; }}
-        .summary-card.passed {{ background: #d4f4dd; }}
-        .summary-card.failed {{ background: #ffd4d4; }}
-        .summary-card .number {{
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 4px;
-        }}
-        .summary-card .label {{
-            font-size: 14px;
-            color: #666;
-        }}
-        .pair-card {{
-            border: 1px solid #e0e0e0;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 12px;
-        }}
-        .pair-card.fail {{
-            border-color: #ff6b6b;
-            background: #fff5f5;
-        }}
-        .pair-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }}
-        .element-name {{
-            font-weight: 600;
-            font-size: 16px;
-            color: #1a1a1a;
-        }}
-        .ratio {{
-            font-size: 18px;
-            font-weight: 700;
-        }}
-        .ratio.pass {{ color: #2ea44f; }}
-        .ratio.fail {{ color: #ff6b6b; }}
-        .color-preview {{
-            display: flex;
-            gap: 16px;
-            margin-bottom: 12px;
-        }}
-        .color-box {{
-            width: 80px;
-            height: 80px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            font-weight: 700;
-            border: 2px solid #e0e0e0;
-        }}
-        .color-info {{
-            flex: 1;
-        }}
-        .color-label {{
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 4px;
-        }}
-        .color-hex {{
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            color: #1a1a1a;
-        }}
-        .badges {{
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }}
-        .badge {{
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-        }}
-        .badge.pass {{
-            background: #d4f4dd;
-            color: #1a7f37;
-        }}
-        .badge.fail {{
-            background: #ffd4d4;
-            color: #cf222e;
-        }}
-        .suggestions {{
-            margin-top: 12px;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }}
-        .suggestions-title {{
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 8px;
-        }}
-        .suggestion-item {{
-            font-size: 14px;
-            color: #1a1a1a;
-            padding: 4px 0;
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <span style="font-size: 28px;">🎨</span>
-        <h1>Color Accessibility Check</h1>
-    </div>
-
-    <div class="summary">
-        <div class="summary-card total">
-            <div class="number">{data['total_pairs']}</div>
-            <div class="label">Total Pairs</div>
-        </div>
-        <div class="summary-card passed">
-            <div class="number">✅ {data['passed_pairs']}</div>
-            <div class="label">Passed</div>
-        </div>
-        <div class="summary-card failed">
-            <div class="number">❌ {data['failed_pairs']}</div>
-            <div class="label">Failed</div>
-        </div>
-    </div>
-
-    {pairs_html}
-</body>
-</html>
-"""
+    return Response(content=html_content, media_type="text/html")
 
 
 if __name__ == "__main__":
