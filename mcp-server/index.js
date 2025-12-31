@@ -242,7 +242,8 @@ app.get('/mcp/sse', async (req, res) => {
 
     try {
         console.log('Creating SSEServerTransport...');
-        transport = new SSEServerTransport('/mcp/messages', res);
+        const baseUrl = `https://${req.get('host')}`;
+        transport = new SSEServerTransport(`${baseUrl}/mcp/messages`, res);
 
         console.log('Connecting to MCP server...');
         await server.connect(transport);
