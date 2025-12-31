@@ -251,10 +251,28 @@ async def health_check():
 async def mcp_endpoint(request: JSONRPCRequest):
     """
     MCP JSON-RPC 2.0 endpoint
-    Handles tools/list and tools/call methods
+    Handles initialize, tools/list, and tools/call methods
     """
     
-    if request.method == "tools/list":
+    # 1. Initialize Handshake
+    if request.method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": request.id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "color-accessibility-checker",
+                    "version": "1.0.0"
+                }
+            }
+        }
+    
+    # 2. List Available Tools
+    elif request.method == "tools/list":
         return {
             "jsonrpc": "2.0",
             "id": request.id,
@@ -296,6 +314,7 @@ async def mcp_endpoint(request: JSONRPCRequest):
             }
         }
     
+    # 3. Call Tool
     elif request.method == "tools/call":
         tool_name = request.params.get("name")
         arguments = request.params.get("arguments", {})
@@ -341,7 +360,16 @@ async def mcp_endpoint(request: JSONRPCRequest):
                     "message": f"Tool not found: {tool_name}"
                 }
             }
+            
+    # Handle Ping (optional but good practice)
+    elif request.method == "ping":
+        return {
+            "jsonrpc": "2.0",
+            "id": request.id,
+            "result": {}
+        }
     
+    # Unknown Method
     else:
         return {
             "jsonrpc": "2.0",
