@@ -234,7 +234,12 @@ server.tool(
 
 // CRÍTICO: SSE Endpoint Implementation
 // Must handle proper headers via SSEServerTransport
-let transport;
+// CRÍTICO: SSE Endpoint Implementation
+// Must handle proper headers via SSEServerTransport
+
+// FIXED: Use a Map to store transports by session ID to support multiple concurrent connections
+// (prevents "Timeout" issues if global variable is overwritten)
+const transports = new Map();
 
 app.get('/mcp/sse', async (req, res) => {
     console.log('=== SSE CONNECTION ATTEMPT ===');
@@ -243,12 +248,27 @@ app.get('/mcp/sse', async (req, res) => {
     try {
         console.log('Creating SSEServerTransport...');
         const baseUrl = `https://${req.get('host')}`;
-        transport = new SSEServerTransport(`${baseUrl}/mcp/messages`, res);
+        const transport = new SSEServerTransport(`${baseUrl}/mcp/messages`, res);
+
+        console.log('Transport ID:', transport.sessionId);
+
+        if (transport.sessionId) {
+            transports.set(transport.sessionId, transport);
+        }
 
         console.log('Connecting to MCP server...');
         await server.connect(transport);
 
         console.log('✅ SSE connected successfully');
+
+        // Clean up on close
+        req.on('close', () => {
+            console.log('SSE connection closed for session:', transport.sessionId);
+            if (transport.sessionId) {
+                transports.delete(transport.sessionId);
+            }
+        });
+
     } catch (error) {
         console.error('❌ SSE connection error:', error);
         if (!res.headersSent) {
@@ -258,24 +278,21 @@ app.get('/mcp/sse', async (req, res) => {
 });
 
 app.post('/mcp/messages', async (req, res) => {
+    const sessionId = req.query.sessionId;
+    console.log('Received POST for session:', sessionId);
+
+    const transport = transports.get(sessionId);
+
     if (transport) {
         await transport.handlePostMessage(req, res);
     } else {
-        res.status(400).send('No active connection');
+        console.warn('❌ Session not found:', sessionId);
+        res.status(404).send('Session not found');
     }
 });
 
-
-// Manual router for POST /mcp is NOT NEEDED if using SSE. 
-// BUT for compatibility or fallback, we can keep it if it does not conflict.
-// If user wants STRICT adherence, maybe we remove it?
-// User said: "Verificar y corregir el endpoint /mcp/sse ... que use EXACTAMENTE este patrón".
-// I will comment out the manual POST /mcp to force usage of SSE if that's what's intended,
-// OR keep it separate.
-// I'll keep it as a separate path just in case, but it shouldn't interfere with /mcp/sse.
-// WAIT - The user says "ChatGPT intenta conectarse al endpoint SSE".
-// So I must ensure SSE works. Extra endpoints don't hurt unless they overlap.
-// I will keep POST /mcp just for my own debugging via curl if needed, or for old configs.
+// Manual router for POST /mcp is NOT NEEDED if using SSE.
+// But we leave it for compatibility with tools inspecting this endpoint.
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
